@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>혈압 기록</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#faf9f5">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="혈압 기록">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --primary:#cc785c;
+    --primary-active:#a9583e;
+    --primary-disabled:#e6dfd8;
+    --ink:#141413;
+    --body:#3d3d3a;
+    --body-strong:#252523;
+    --muted:#6c6a64;
+    --muted-soft:#8e8b82;
+    --hairline:#e6dfd8;
+    --hairline-soft:#ebe6df;
+    --canvas:#faf9f5;
+    --surface-soft:#f5f0e8;
+    --surface-card:#efe9de;
+    --surface-cream-strong:#e8e0d2;
+    --surface-dark:#181715;
+    --on-primary:#ffffff;
+    --on-dark:#faf9f5;
+    --success:#5db872;
+    --warning:#d4a017;
+    --error:#c64545;
+    --font-display:"Cormorant Garamond","Malgun Gothic",serif;
+    --font-body:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:var(--font-body);
+    background:var(--canvas);
+    color:var(--body);
+    padding-bottom:40px;
+    -webkit-tap-highlight-color:transparent;
+  }
+  header{
+    background:var(--canvas);
+    border-bottom:1px solid var(--hairline);
+    padding:18px 16px;
+    text-align:center;
+    position:sticky;
+    top:0;
+    z-index:10;
+  }
+  header .mark{
+    display:inline-block;
+    width:8px;height:8px;
+    background:var(--primary);
+    border-radius:50%;
+    margin-right:8px;
+    vertical-align:middle;
+  }
+  header h1{
+    margin:0;
+    display:inline;
+    font-family:var(--font-display);
+    font-weight:600;
+    font-size:22px;
+    color:var(--ink);
+    letter-spacing:-0.3px;
+    vertical-align:middle;
+  }
+  header p{
+    margin:4px 0 0;
+    font-size:12px;
+    color:var(--muted);
+  }
+  main{max-width:520px;margin:0 auto;padding:16px;}
+  .card{
+    background:var(--surface-card);
+    border-radius:12px;
+    padding:20px;
+    margin-bottom:16px;
+  }
+  .card h2{
+    font-size:13px;
+    font-weight:500;
+    margin:0 0 14px;
+    color:var(--muted);
+    text-transform:uppercase;
+    letter-spacing:1px;
+  }
+  .row{display:flex;gap:10px;margin-bottom:12px;}
+  .row > div{flex:1;}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:500;}
+  input[type=number], input[type=date], input[type=time], input[type=text], textarea{
+    width:100%;
+    padding:10px 12px;
+    border:1px solid var(--hairline);
+    border-radius:8px;
+    font-size:16px;
+    background:var(--canvas);
+    color:var(--ink);
+    font-family:var(--font-body);
+  }
+  input:focus, textarea:focus{
+    outline:none;
+    border-color:var(--primary);
+    box-shadow:0 0 0 3px rgba(204,120,92,0.15);
+  }
+  textarea{resize:vertical;min-height:44px;font-family:inherit;}
+  .btn{
+    display:inline-block;
+    border:none;
+    border-radius:8px;
+    padding:12px 16px;
+    font-size:15px;
+    font-weight:500;
+    cursor:pointer;
+    width:100%;
+    font-family:var(--font-body);
+  }
+  .btn-primary{background:var(--primary);color:var(--on-primary);}
+  .btn-primary:active{background:var(--primary-active);}
+  .btn-secondary{background:var(--canvas);color:var(--ink);border:1px solid var(--hairline);}
+  .btn-secondary:active{background:var(--surface-soft);}
+  .btn-flat{background:transparent;color:var(--muted);text-decoration:underline;}
+  .form-actions{display:flex;gap:8px;margin-top:16px;}
+  .badge{
+    display:inline-block;
+    padding:2px 10px;
+    border-radius:9999px;
+    font-size:11px;
+    font-weight:600;
+    letter-spacing:0.3px;
+  }
+  .badge.high{background:var(--error);color:#fff;}
+  .badge.normal{background:var(--surface-cream-strong);color:var(--body-strong);}
+  canvas#chart{width:100%;height:180px;display:block;}
+  .record{
+    border-bottom:1px solid var(--hairline);
+    padding:14px 0;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:10px;
+  }
+  .record:last-child{border-bottom:none;}
+  .record-info{flex:1;min-width:0;}
+  .record-date{font-size:12px;color:var(--muted);}
+  .record-values{
+    font-family:var(--font-display);
+    font-size:22px;
+    font-weight:600;
+    margin-top:2px;
+    color:var(--ink);
+  }
+  .record-values span.pulse{font-family:var(--font-body);font-size:12px;font-weight:400;color:var(--muted);margin-left:8px;}
+  .record-memo{font-size:12px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .record-actions{display:flex;gap:6px;flex-shrink:0;}
+  .icon-btn{
+    border:none;background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;
+    width:34px;height:34px;font-size:14px;cursor:pointer;
+  }
+  .empty{text-align:center;color:var(--muted);padding:30px 0;font-size:14px;}
+  .file-io{display:flex;gap:8px;}
+  .file-io .btn{font-size:13px;padding:10px;}
+  #importFile{display:none;}
+  .toast{
+    position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+    background:var(--surface-dark);color:var(--on-dark);padding:10px 18px;border-radius:9999px;
+    font-size:13px;opacity:0;pointer-events:none;transition:opacity .3s;z-index:200;
+    max-width:88%;text-align:center;
+  }
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="mark"></span><h1>혈압 기록</h1>
+  <p>매일의 혈압을 기록하고 추이를 확인하세요</p>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2 id="formTitle">오늘의 혈압 기록</h2>
+
+    <div class="row">
+      <div>
+        <label>날짜</label>
+        <input type="date" id="fDate">
+      </div>
+      <div>
+        <label>시간</label>
+        <input type="time" id="fTime">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>수축기 (mmHg)</label>
+        <input type="number" id="fSystolic" placeholder="120" inputmode="numeric">
+      </div>
+      <div>
+        <label>이완기 (mmHg)</label>
+        <input type="number" id="fDiastolic" placeholder="80" inputmode="numeric">
+      </div>
+      <div>
+        <label>맥박 (bpm)</label>
+        <input type="number" id="fPulse" placeholder="70" inputmode="numeric">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>메모 (선택)</label>
+        <textarea id="fMemo" placeholder="예: 약 복용 후, 운동 전 등"></textarea>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn-primary" id="saveBtn">저장</button>
+      <button class="btn btn-flat" id="cancelEditBtn" style="display:none;">취소</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>최근 추이</h2>
+    <canvas id="chart"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>기록 목록</h2>
+    <div id="recordList"></div>
+  </div>
+
+  <div class="card">
+    <h2>백업</h2>
+    <div class="file-io">
+      <button class="btn btn-secondary" id="exportBtn">내보내기 (JSON 저장)</button>
+      <button class="btn btn-secondary" id="importBtn">가져오기</button>
+      <input type="file" id="importFile" accept="application/json">
+    </div>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+  const STORAGE_KEY = "bp_records_v1";
+  let records = loadRecords();
+  let editingId = null;
+
+  // ---------- storage ----------
+  function loadRecords(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    }catch(e){ return []; }
+  }
+  function saveRecords(){
+    try{
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+      return true;
+    }catch(e){
+      toast("저장 공간이 부족해요. 백업 후 오래된 기록을 정리해주세요.");
+      return false;
+    }
+  }
+
+  // ---------- helpers ----------
+  function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+  function pad(n){ return String(n).padStart(2,"0"); }
+  function nowDateStr(){ const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+  function nowTimeStr(){ const d=new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+  function toast(msg){
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(()=>t.classList.remove("show"), 2200);
+  }
+
+  // ---------- form refs ----------
+  const fDate = document.getElementById("fDate");
+  const fTime = document.getElementById("fTime");
+  const fSystolic = document.getElementById("fSystolic");
+  const fDiastolic = document.getElementById("fDiastolic");
+  const fPulse = document.getElementById("fPulse");
+  const fMemo = document.getElementById("fMemo");
+  const formTitle = document.getElementById("formTitle");
+  const saveBtn = document.getElementById("saveBtn");
+  const cancelEditBtn = document.getElementById("cancelEditBtn");
+
+  function resetForm(){
+    editingId = null;
+    fDate.value = nowDateStr();
+    fTime.value = nowTimeStr();
+    fSystolic.value = "";
+    fDiastolic.value = "";
+    fPulse.value = "";
+    fMemo.value = "";
+    formTitle.textContent = "오늘의 혈압 기록";
+    saveBtn.textContent = "저장";
+    cancelEditBtn.style.display = "none";
+  }
+  resetForm();
+
+  // ---------- save / edit / delete ----------
+  saveBtn.addEventListener("click", function(){
+    const systolic = parseInt(fSystolic.value, 10);
+    const diastolic = parseInt(fDiastolic.value, 10);
+    const pulse = fPulse.value ? parseInt(fPulse.value, 10) : null;
+
+    if(!fDate.value || !fTime.value){
+      toast("날짜와 시간을 입력해주세요");
+      return;
+    }
+    if(!systolic || !diastolic){
+      toast("수축기/이완기 값을 입력해주세요");
+      return;
+    }
+
+    if(editingId){
+      const rec = records.find(r => r.id === editingId);
+      if(rec){
+        rec.date = fDate.value;
+        rec.time = fTime.value;
+        rec.systolic = systolic;
+        rec.diastolic = diastolic;
+        rec.pulse = pulse;
+        rec.memo = fMemo.value.trim();
+      }
+      toast("수정되었습니다");
+    }else{
+      records.push({
+        id: uid(),
+        date: fDate.value,
+        time: fTime.value,
+        systolic: systolic,
+        diastolic: diastolic,
+        pulse: pulse,
+        memo: fMemo.value.trim()
+      });
+      toast("저장되었습니다");
+    }
+
+    saveRecords();
+    resetForm();
+    render();
+  });
+
+  cancelEditBtn.addEventListener("click", resetForm);
+
+  function startEdit(id){
+    const rec = records.find(r => r.id === id);
+    if(!rec) return;
+    editingId = id;
+    fDate.value = rec.date;
+    fTime.value = rec.time;
+    fSystolic.value = rec.systolic;
+    fDiastolic.value = rec.diastolic;
+    fPulse.value = rec.pulse || "";
+    fMemo.value = rec.memo || "";
+    formTitle.textContent = "기록 수정";
+    saveBtn.textContent = "수정 완료";
+    cancelEditBtn.style.display = "block";
+    window.scrollTo({top:0, behavior:"smooth"});
+  }
+
+  function deleteRecord(id){
+    if(!confirm("이 기록을 삭제할까요?")) return;
+    records = records.filter(r => r.id !== id);
+    saveRecords();
+    if(editingId === id) resetForm();
+    render();
+  }
+
+  // ---------- rendering ----------
+  const recordList = document.getElementById("recordList");
+
+  function sortedRecords(){
+    return [...records].sort((a,b) => {
+      const da = a.date + " " + a.time;
+      const db = b.date + " " + b.time;
+      return db.localeCompare(da);
+    });
+  }
+
+  function render(){
+    const sorted = sortedRecords();
+    if(sorted.length === 0){
+      recordList.innerHTML = '<div class="empty">아직 기록이 없어요. 위에서 첫 혈압을 기록해보세요.</div>';
+    }else{
+      recordList.innerHTML = sorted.map(rec => {
+        const isHigh = rec.systolic >= 140 || rec.diastolic >= 90;
+        const badge = isHigh
+          ? '<span class="badge high">높음</span>'
+          : '<span class="badge normal">정상</span>';
+        return `
+        <div class="record">
+          <div class="record-info">
+            <div class="record-date">${rec.date} ${rec.time}</div>
+            <div class="record-values">${rec.systolic}/${rec.diastolic} ${badge}
+              ${rec.pulse ? `<span class="pulse">맥박 ${rec.pulse}</span>` : ""}
+            </div>
+            ${rec.memo ? `<div class="record-memo">${escapeHtml(rec.memo)}</div>` : ""}
+          </div>
+          <div class="record-actions">
+            <button class="icon-btn" data-edit="${rec.id}">✏️</button>
+            <button class="icon-btn" data-del="${rec.id}">🗑️</button>
+          </div>
+        </div>`;
+      }).join("");
+    }
+    drawChart(sorted);
+  }
+
+  function escapeHtml(s){
+    const div = document.createElement("div");
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  recordList.addEventListener("click", function(e){
+    const editId = e.target.getAttribute("data-edit");
+    const delId = e.target.getAttribute("data-del");
+    if(editId) startEdit(editId);
+    if(delId) deleteRecord(delId);
+  });
+
+  // ---------- chart ----------
+  function drawChart(sorted){
+    const canvas = document.getElementById("chart");
+    const dpr = window.devicePixelRatio || 1;
+    const cssWidth = canvas.clientWidth || 480;
+    const cssHeight = 180;
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,cssWidth,cssHeight);
+
+    const data = [...sorted].slice(0, 14).reverse(); // oldest to newest, last 14
+    if(data.length === 0){
+      ctx.fillStyle = "#8e8b82";
+      ctx.font = "13px sans-serif";
+      ctx.fillText("기록이 쌓이면 그래프가 표시됩니다", 10, cssHeight/2);
+      return;
+    }
+
+    const padding = {top:14, right:10, bottom:22, left:32};
+    const plotW = cssWidth - padding.left - padding.right;
+    const plotH = cssHeight - padding.top - padding.bottom;
+
+    const allVals = data.flatMap(d => [d.systolic, d.diastolic]);
+    let minV = Math.min(60, ...allVals) - 10;
+    let maxV = Math.max(160, ...allVals) + 10;
+
+    function xAt(i){ return padding.left + (data.length===1 ? plotW/2 : (i/(data.length-1))*plotW); }
+    function yAt(v){ return padding.top + plotH - ((v-minV)/(maxV-minV))*plotH; }
+
+    // reference lines 120 / 80
+    [120,80].forEach(refV => {
+      const y = yAt(refV);
+      ctx.strokeStyle = "#e6dfd8";
+      ctx.setLineDash([4,4]);
+      ctx.beginPath();
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(cssWidth - padding.right, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#8e8b82";
+      ctx.font = "10px sans-serif";
+      ctx.fillText(String(refV), 2, y+3);
+    });
+
+    function drawLine(key, color){
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      data.forEach((d,i) => {
+        const x = xAt(i), y = yAt(d[key]);
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+      data.forEach((d,i) => {
+        const x = xAt(i), y = yAt(d[key]);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x,y,2.5,0,Math.PI*2);
+        ctx.fill();
+      });
+    }
+    drawLine("diastolic", "#e8a55a");
+    drawLine("systolic", "#cc785c");
+
+    // x labels (first, middle, last)
+    ctx.fillStyle = "#8e8b82";
+    ctx.font = "10px sans-serif";
+    const labelIdx = data.length > 1 ? [0, data.length-1] : [0];
+    labelIdx.forEach(i => {
+      const d = data[i];
+      const label = d.date.slice(5); // MM-DD
+      const x = xAt(i);
+      ctx.fillText(label, Math.max(padding.left, Math.min(x-14, cssWidth-30)), cssHeight-4);
+    });
+  }
+
+  window.addEventListener("resize", () => drawChart(sortedRecords()));
+
+  // ---------- export / import ----------
+  document.getElementById("exportBtn").addEventListener("click", function(){
+    const blob = new Blob([JSON.stringify(records, null, 2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `혈압기록_백업_${nowDateStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast("백업 파일이 다운로드되었습니다");
+  });
+
+  const importFile = document.getElementById("importFile");
+  document.getElementById("importBtn").addEventListener("click", () => importFile.click());
+  importFile.addEventListener("change", function(){
+    const file = this.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e){
+      try{
+        const imported = JSON.parse(e.target.result);
+        if(!Array.isArray(imported)) throw new Error("invalid format");
+        const existingIds = new Set(records.map(r => r.id));
+        let added = 0;
+        imported.forEach(rec => {
+          if(rec && rec.id && !existingIds.has(rec.id)){
+            records.push(rec);
+            added++;
+          }
+        });
+        saveRecords();
+        render();
+        toast(`${added}건의 기록을 가져왔습니다`);
+      }catch(err){
+        toast("파일을 읽을 수 없어요. 올바른 백업 파일인지 확인해주세요.");
+      }
+      importFile.value = "";
+    };
+    reader.readAsText(file);
+  });
+
+  // ---------- init ----------
+  render();
+
+  // PWA install support. Requires a secure context (https, or localhost) —
+  // silently does nothing when opened directly as a local file:// page.
+  if("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")){
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
+})();
+</script>
+</body>
+</html>
