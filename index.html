@@ -47,6 +47,8 @@
     background:var(--canvas);
     color:var(--body);
     padding-bottom:40px;
+    overflow-wrap:break-word;
+    word-break:break-word;
     -webkit-tap-highlight-color:transparent;
   }
   header{
@@ -58,14 +60,6 @@
     top:0;
     z-index:10;
   }
-  header .mark{
-    display:inline-block;
-    width:8px;height:8px;
-    background:var(--primary);
-    border-radius:50%;
-    margin-right:8px;
-    vertical-align:middle;
-  }
   header h1{
     margin:0;
     display:inline;
@@ -75,11 +69,6 @@
     color:var(--ink);
     letter-spacing:-0.3px;
     vertical-align:middle;
-  }
-  header p{
-    margin:4px 0 0;
-    font-size:12px;
-    color:var(--muted);
   }
   main{max-width:520px;margin:0 auto;padding:16px;}
   .card{
@@ -162,7 +151,7 @@
     color:var(--ink);
   }
   .record-values span.pulse{font-family:var(--font-body);font-size:12px;font-weight:400;color:var(--muted);margin-left:8px;}
-  .record-memo{font-size:12px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .record-memo{font-size:12px;color:var(--muted);margin-top:3px;white-space:normal;overflow-wrap:break-word;word-break:keep-all;}
   .record-actions{display:flex;gap:6px;flex-shrink:0;}
   .icon-btn{
     border:none;background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;
@@ -170,7 +159,11 @@
   }
   .empty{text-align:center;color:var(--muted);padding:30px 0;font-size:14px;}
   .file-io{display:flex;gap:8px;}
-  .file-io .btn{font-size:13px;padding:10px;}
+  .file-io .btn{font-size:13px;padding:10px;white-space:nowrap;}
+  @media (max-width: 380px){
+    .file-io{flex-direction:column;}
+    .row-datetime{flex-direction:column;}
+  }
   #importFile{display:none;}
   .toast{
     position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
@@ -196,14 +189,13 @@
     display:none;
     border:1px solid var(--hairline);
   }
-  .lcd-hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;}
+  .lcd-hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;overflow-wrap:break-word;word-break:break-word;}
 </style>
 </head>
 <body>
 
 <header>
-  <span class="mark"></span><h1>혈압 기록</h1>
-  <p>매일의 혈압을 기록하고 추이를 확인하세요</p>
+  <h1>🩺 혈압 기록</h1>
 </header>
 
 <main>
@@ -220,7 +212,7 @@
   <div class="card">
     <h2 id="formTitle">오늘의 혈압 기록</h2>
 
-    <div class="row">
+    <div class="row row-datetime">
       <div>
         <label>날짜</label>
         <input type="date" id="fDate">
