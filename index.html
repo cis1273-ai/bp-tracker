@@ -179,6 +179,24 @@
     max-width:88%;text-align:center;
   }
   .toast.show{opacity:1;}
+
+  /* --- LCD auto-recognition (added feature, does not affect anything above) --- */
+  #lcdPhotoInput{display:none;}
+  .lcd-status{
+    font-size:13px;
+    color:var(--primary-active);
+    margin-top:8px;
+    display:none;
+  }
+  .lcd-status.active{display:block;}
+  .lcd-preview{
+    margin-top:10px;
+    max-width:100%;
+    border-radius:8px;
+    display:none;
+    border:1px solid var(--hairline);
+  }
+  .lcd-hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;}
 </style>
 </head>
 <body>
@@ -189,6 +207,15 @@
 </header>
 
 <main>
+
+  <div class="card">
+    <h2>혈압계 화면 사진으로 자동 인식</h2>
+    <input type="file" id="lcdPhotoInput" accept="image/*" capture="environment">
+    <button class="btn btn-secondary" id="lcdPhotoBtn">📷 혈압계 LCD 화면 촬영/선택</button>
+    <div class="lcd-status" id="lcdStatus"></div>
+    <img class="lcd-preview" id="lcdPreview">
+    <div class="lcd-hint">오므론 등 SYS/DIA/PULSE 3줄 LCD 화면을 정면에서 찍으면 아래 입력칸에 자동으로 채워져요. 인식된 값은 저장 전 꼭 확인해주세요.</div>
+  </div>
 
   <div class="card">
     <h2 id="formTitle">오늘의 혈압 기록</h2>
@@ -572,6 +599,348 @@
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("sw.js").catch(() => {});
     });
+  }
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// LCD auto-recognition (added feature). Fully self-contained: does not read
+// or modify anything the script above defines, only reads a photo and, on
+// success, writes into the existing #fSystolic/#fDiastolic/#fPulse fields
+// for the user to review before saving — same as any manual entry would.
+//
+// Generic OCR (Tesseract) cannot read seven-segment LCD digits at all — it's
+// trained on ordinary typefaces, and segmented digits don't look like any
+// letterform it knows, tested and confirmed unusable for this. Instead this
+// decodes the display directly:
+//   1) find the LCD panel in the photo (its bezel forms a dark ring; the
+//      panel interior is the largest area of the photo fully enclosed by
+//      dark pixels — i.e. unreachable by flood-filling in from the edges)
+//   2) crop to that panel and binarize with local (not global) adaptive
+//      thresholding, since the segments are only slightly darker than the
+//      panel background and a single global threshold washes them out
+//   3) split into rows, then digits within each row, by projecting black
+//      pixel counts onto each axis and reading off the gaps
+//   4) classify each digit by sampling the seven classic segment zones
+//      (a rule-based lookup, not a trained model — segmented digits have an
+//      exact geometric definition, so this is more reliable here than OCR)
+// ---------------------------------------------------------------------------
+(function(){
+  "use strict";
+
+  const lcdPhotoInput = document.getElementById("lcdPhotoInput");
+  const lcdPhotoBtn = document.getElementById("lcdPhotoBtn");
+  const lcdStatus = document.getElementById("lcdStatus");
+  const lcdPreview = document.getElementById("lcdPreview");
+
+  if(!lcdPhotoInput || !lcdPhotoBtn) return; // defensive: feature is additive only
+
+  lcdPhotoBtn.addEventListener("click", () => lcdPhotoInput.click());
+
+  lcdPhotoInput.addEventListener("change", function(){
+    const file = this.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e){
+      lcdPreview.src = e.target.result;
+      lcdPreview.style.display = "block";
+      runLcdRecognition(e.target.result);
+    };
+    reader.readAsDataURL(file);
+    lcdPhotoInput.value = "";
+  });
+
+  function setStatus(msg){
+    lcdStatus.textContent = msg;
+    lcdStatus.classList.add("active");
+    clearTimeout(setStatus._t);
+    setStatus._t = setTimeout(() => lcdStatus.classList.remove("active"), 4500);
+  }
+
+  function loadImg(src){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  function scaledCanvas(img, maxDim){
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+    return { canvas, scale };
+  }
+
+  // local adaptive threshold via integral image (Bradley's method) — compares
+  // each pixel to its neighborhood's mean rather than one global cutoff
+  function adaptiveThreshold(canvas, windowFrac, sensitivity){
+    const ctx = canvas.getContext("2d");
+    const { width, height } = canvas;
+    const d = ctx.getImageData(0, 0, width, height).data;
+    const n = width * height;
+    const gray = new Float64Array(n);
+    for(let i = 0, p = 0; i < d.length; i += 4, p++){
+      gray[p] = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+    }
+    const integral = new Float64Array(n);
+    for(let y = 0; y < height; y++){
+      let rowSum = 0;
+      for(let x = 0; x < width; x++){
+        const idx = y*width + x;
+        rowSum += gray[idx];
+        integral[idx] = rowSum + (y > 0 ? integral[idx-width] : 0);
+      }
+    }
+    const w2 = Math.floor(width * windowFrac / 2);
+    const grid = new Uint8Array(n); // 1 = ink (dark), 0 = background
+    for(let y = 0; y < height; y++){
+      for(let x = 0; x < width; x++){
+        const x1 = Math.max(0, x-w2), x2 = Math.min(width-1, x+w2);
+        const y1 = Math.max(0, y-w2), y2 = Math.min(height-1, y+w2);
+        const area = (x2-x1+1) * (y2-y1+1);
+        const A = x1>0 && y1>0 ? integral[(y1-1)*width+(x1-1)] : 0;
+        const B = y1>0 ? integral[(y1-1)*width+x2] : 0;
+        const C = x1>0 ? integral[y2*width+(x1-1)] : 0;
+        const D = integral[y2*width+x2];
+        const mean = (D-B-C+A) / area;
+        const idx = y*width + x;
+        grid[idx] = gray[idx] < mean*(1-sensitivity) ? 1 : 0;
+      }
+    }
+    return { grid, width, height };
+  }
+
+  // largest white region unreachable from the image border = the panel interior
+  function findLargestEnclosedRegion(grid, width, height){
+    const outside = new Uint8Array(width*height);
+    const stack = [];
+    for(let x=0;x<width;x++){ if(!grid[x]) stack.push(x); const bi=(height-1)*width+x; if(!grid[bi]) stack.push(bi); }
+    for(let y=0;y<height;y++){ if(!grid[y*width]) stack.push(y*width); if(!grid[y*width+width-1]) stack.push(y*width+width-1); }
+    while(stack.length){
+      const idx = stack.pop();
+      if(outside[idx]) continue;
+      outside[idx] = 1;
+      const x = idx%width, y = (idx/width)|0;
+      for(const [nx,ny] of [[x-1,y],[x+1,y],[x,y-1],[x,y+1]]){
+        if(nx<0||ny<0||nx>=width||ny>=height) continue;
+        const nidx = ny*width+nx;
+        if(!outside[nidx] && !grid[nidx]) stack.push(nidx);
+      }
+    }
+    const visited = new Uint8Array(width*height);
+    let best = null;
+    for(let start=0; start<width*height; start++){
+      if(grid[start] || outside[start] || visited[start]) continue;
+      const stack2 = [start]; visited[start] = 1;
+      let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,count=0;
+      while(stack2.length){
+        const idx = stack2.pop(); count++;
+        const x = idx%width, y = (idx/width)|0;
+        if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y;
+        for(const [nx,ny] of [[x-1,y],[x+1,y],[x,y-1],[x,y+1]]){
+          if(nx<0||ny<0||nx>=width||ny>=height) continue;
+          const nidx = ny*width+nx;
+          if(!visited[nidx] && !grid[nidx] && !outside[nidx]){ visited[nidx]=1; stack2.push(nidx); }
+        }
+      }
+      if(!best || count > best.count) best = { minX,maxX,minY,maxY,count };
+    }
+    return best;
+  }
+
+  function removeBorderConnected(grid, width, height){
+    const visited = new Uint8Array(width*height);
+    const stack = [];
+    for(let x=0;x<width;x++){ if(grid[x]) stack.push(x); const bi=(height-1)*width+x; if(grid[bi]) stack.push(bi); }
+    for(let y=0;y<height;y++){ if(grid[y*width]) stack.push(y*width); if(grid[y*width+width-1]) stack.push(y*width+width-1); }
+    while(stack.length){
+      const idx = stack.pop();
+      if(visited[idx]) continue;
+      visited[idx] = 1;
+      const x = idx%width, y = (idx/width)|0;
+      for(const [nx,ny] of [[x-1,y],[x+1,y],[x,y-1],[x,y+1]]){
+        if(nx<0||ny<0||nx>=width||ny>=height) continue;
+        const nidx = ny*width+nx;
+        if(!visited[nidx] && grid[nidx]) stack.push(nidx);
+      }
+    }
+    const out = new Uint8Array(width*height);
+    for(let i=0;i<grid.length;i++) out[i] = (grid[i] && !visited[i]) ? 1 : 0;
+    return out;
+  }
+
+  function removeSmallBlobs(grid, width, height, minArea){
+    const visited = new Uint8Array(width*height);
+    const out = new Uint8Array(width*height);
+    for(let start=0; start<grid.length; start++){
+      if(!grid[start] || visited[start]) continue;
+      const stack = [start]; const blob = [];
+      visited[start] = 1;
+      while(stack.length){
+        const idx = stack.pop(); blob.push(idx);
+        const x = idx%width, y = (idx/width)|0;
+        for(const [nx,ny] of [[x-1,y],[x+1,y],[x,y-1],[x,y+1],[x-1,y-1],[x+1,y-1],[x-1,y+1],[x+1,y+1]]){
+          if(nx<0||ny<0||nx>=width||ny>=height) continue;
+          const nidx = ny*width+nx;
+          if(!visited[nidx] && grid[nidx]){ visited[nidx]=1; stack.push(nidx); }
+        }
+      }
+      if(blob.length >= minArea) for(const idx of blob) out[idx] = 1;
+    }
+    return out;
+  }
+
+  function findBands(counts, len, minGap, minSize){
+    const bands = [];
+    let start = -1, gapRun = 0;
+    for(let i=0;i<len;i++){
+      if(counts[i] > 0){ if(start === -1) start = i; gapRun = 0; }
+      else if(start !== -1){
+        gapRun++;
+        if(gapRun > minGap){
+          const end = i - gapRun;
+          if(end-start+1 >= minSize) bands.push([start,end]);
+          start = -1; gapRun = 0;
+        }
+      }
+    }
+    if(start !== -1){ const end = len-1-gapRun; if(end-start+1 >= minSize) bands.push([start,end]); }
+    return bands;
+  }
+
+  function tightBox(grid, width, x1, x2, y1, y2){
+    let minY=Infinity, maxY=-Infinity, minX=Infinity, maxX=-Infinity;
+    for(let y=y1;y<=y2;y++) for(let x=x1;x<=x2;x++){
+      if(grid[y*width+x]){ if(y<minY)minY=y; if(y>maxY)maxY=y; if(x<minX)minX=x; if(x>maxX)maxX=x; }
+    }
+    return [minX,minY,maxX,maxY];
+  }
+
+  function segRatio(grid, width, x1, y1, x2, y2){
+    let total=0, black=0;
+    x1=Math.max(0,Math.round(x1)); y1=Math.max(0,Math.round(y1));
+    x2=Math.round(x2); y2=Math.round(y2);
+    for(let y=y1;y<y2;y++) for(let x=x1;x<x2;x++){ total++; if(grid[y*width+x]) black++; }
+    return total ? black/total : 0;
+  }
+
+  const SEG_MAP = {
+    "1111110":"0","1101101":"2","1111001":"3","0110011":"4",
+    "1011011":"5","1011111":"6","1110000":"7","1111111":"8","1111011":"9"
+  };
+
+  function decodeDigit(grid, width, box){
+    const [x1,y1,x2,y2] = box;
+    const w = x2-x1, h = y2-y1;
+    if(h <= 0) return null;
+    if(w/h < 0.38) return "1"; // "1" is drawn as a lone narrow stroke — no zones to sample
+    const thick = 0.16;
+    const a=segRatio(grid,width,x1+w*0.28,y1,x2-w*0.28,y1+h*thick)>0.3;
+    const g=segRatio(grid,width,x1+w*0.22,y1+h*0.5-h*thick/2,x2-w*0.22,y1+h*0.5+h*thick/2)>0.3;
+    const d=segRatio(grid,width,x1+w*0.28,y2-h*thick,x2-w*0.28,y2)>0.3;
+    const f=segRatio(grid,width,x1,y1+h*0.12,x1+w*0.30,y1+h*0.46)>0.28;
+    const b=segRatio(grid,width,x2-w*0.30,y1+h*0.12,x2,y1+h*0.46)>0.28;
+    const e=segRatio(grid,width,x1,y1+h*0.54,x1+w*0.30,y2-h*0.12)>0.28;
+    const c=segRatio(grid,width,x2-w*0.30,y1+h*0.54,x2,y2-h*0.12)>0.28;
+    const key = [a,b,c,d,e,f,g].map(v=>v?"1":"0").join("");
+    return SEG_MAP[key] || null;
+  }
+
+  function recognizeDigitRows(grid, width, height){
+    grid = removeBorderConnected(grid, width, height);
+    grid = removeSmallBlobs(grid, width, height, Math.round(width*height*0.0005));
+    const rowCounts = new Array(height).fill(0);
+    for(let y=0;y<height;y++){ let c=0; for(let x=0;x<width;x++) c+=grid[y*width+x]; rowCounts[y]=c; }
+    const rowBands = findBands(rowCounts, height, Math.round(height*0.02), Math.round(height*0.04));
+    if(rowBands.length === 0) return [];
+    const maxRowHeight = Math.max(...rowBands.map(([a,b])=>b-a));
+    const rows = [];
+    for(const [ry1,ry2] of rowBands){
+      const colCounts = new Array(width).fill(0);
+      for(let x=0;x<width;x++){ let c=0; for(let y=ry1;y<=ry2;y++) c+=grid[y*width+x]; colCounts[x]=c; }
+      const colBands = findBands(colCounts, width, Math.round(width*0.012), Math.round(width*0.015));
+      let digits = "";
+      let allValid = true;
+      for(const [cx1,cx2] of colBands){
+        const tb = tightBox(grid, width, cx1, cx2, ry1, ry2);
+        const boxH = tb[3]-tb[1];
+        if(boxH < maxRowHeight*0.6) continue; // small icon (e.g. an "OK" mark), not a digit
+        const d = decodeDigit(grid, width, [tb[0],tb[1],tb[2]+1,tb[3]+1]);
+        if(d === null){ allValid = false; break; }
+        digits += d;
+      }
+      if(digits && allValid) rows.push(digits);
+    }
+    return rows;
+  }
+
+  async function runLcdRecognition(dataUrl){
+    setStatus("화면 위치를 찾는 중...");
+    try{
+      const img = await loadImg(dataUrl);
+
+      // stage 1: locate the LCD panel on a small working copy
+      const { canvas: smallCanvas, scale: detectScale } = scaledCanvas(img, 1400);
+      const { grid: smallGrid, width: sw, height: sh } = adaptiveThreshold(smallCanvas, 0.12, 0.10);
+      const region = findLargestEnclosedRegion(smallGrid, sw, sh);
+
+      if(!region || region.count < sw*sh*0.02){
+        setStatus("화면 영역을 찾지 못했어요. 혈압계 LCD 화면이 잘 보이도록 정면에서 다시 찍어주세요.");
+        return;
+      }
+
+      setStatus("숫자를 읽는 중...");
+
+      // map back to full-resolution coordinates, inset slightly inward so the
+      // dark bezel ring itself is excluded (it would otherwise fuse with the
+      // digit segments during border-blob removal)
+      const marginFrac = -0.025;
+      const rw = region.maxX - region.minX, rh = region.maxY - region.minY;
+      const mx = rw*marginFrac, my = rh*marginFrac;
+      const x1 = Math.max(0, (region.minX - mx) / detectScale);
+      const y1 = Math.max(0, (region.minY - my) / detectScale);
+      const x2 = Math.min(img.width, (region.maxX + mx) / detectScale);
+      const y2 = Math.min(img.height, (region.maxY + my) / detectScale);
+
+      const cropW = Math.max(1, Math.round(x2-x1)), cropH = Math.max(1, Math.round(y2-y1));
+      const cropCanvas = document.createElement("canvas");
+      cropCanvas.width = cropW; cropCanvas.height = cropH;
+      cropCanvas.getContext("2d").drawImage(img, x1, y1, cropW, cropH, 0, 0, cropW, cropH);
+
+      // stage 2: re-threshold the crop at higher detail for accurate segment sampling
+      const scale2 = Math.min(3, 1600/Math.max(cropW,cropH));
+      const w2 = Math.round(cropW*scale2), h2 = Math.round(cropH*scale2);
+      const fineCanvas = document.createElement("canvas");
+      fineCanvas.width = w2; fineCanvas.height = h2;
+      fineCanvas.getContext("2d").drawImage(cropCanvas, 0, 0, w2, h2);
+      const { grid: fgrid, width: fw, height: fh } = adaptiveThreshold(fineCanvas, 0.25, 0.05);
+
+      const rows = recognizeDigitRows(fgrid, fw, fh);
+
+      if(rows.length < 2){
+        setStatus("숫자를 정확히 읽지 못했어요. 화면이 잘 보이게 다시 찍거나 직접 입력해주세요.");
+        return;
+      }
+
+      const sys = parseInt(rows[0], 10);
+      const dia = parseInt(rows[1], 10);
+      const pul = rows[2] ? parseInt(rows[2], 10) : null;
+
+      if(sys) document.getElementById("fSystolic").value = sys;
+      if(dia) document.getElementById("fDiastolic").value = dia;
+      if(pul) document.getElementById("fPulse").value = pul;
+
+      setStatus("인식 완료! 값을 확인하고 필요하면 수정해주세요.");
+    }catch(err){
+      console.error(err);
+      setStatus("인식 중 문제가 발생했어요. 직접 입력해주세요.");
+    }
   }
 })();
 </script>
